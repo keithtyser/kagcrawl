@@ -27,6 +27,26 @@ def report_to_txt(report: AlphaReport) -> str:
             f"   Takeaway: {finding.takeaway}",
             "",
         ])
+    if report.resolved_notebooks:
+        lines.append("Resolved notebooks:")
+        for notebook in report.resolved_notebooks:
+            lines.extend([
+                f"- {notebook.owner}/{notebook.slug}",
+                f"  URL: {notebook.url}",
+                f"  Title: {notebook.title}",
+            ])
+            markdown = notebook.markdown_text.strip()
+            if markdown:
+                preview = markdown[:500].replace("\n", " ")
+                lines.append(f"  Markdown preview: {preview}")
+            if notebook.selected_code_cells:
+                lines.append(f"  Code cells captured: {len(notebook.selected_code_cells)}")
+            lines.append("")
+    if report.notebook_resolution_errors:
+        lines.append("Notebook resolution errors:")
+        for err in report.notebook_resolution_errors:
+            lines.append(f"- {err}")
+        lines.append("")
     if report.next_assets:
         lines.append("Linked notebooks / next assets:")
         for asset in report.next_assets:

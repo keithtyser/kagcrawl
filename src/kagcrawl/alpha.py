@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .schemas import AlphaFinding, AlphaReport, ThreadRecord
+from .schemas import AlphaFinding, AlphaReport, NotebookRecord, ThreadRecord
 
 
 def score_thread(thread: ThreadRecord) -> tuple[float, list[str]]:
@@ -48,7 +48,12 @@ def build_finding(thread: ThreadRecord) -> AlphaFinding:
     )
 
 
-def crawl_alpha_report(competition: str, threads: list[ThreadRecord]) -> AlphaReport:
+def crawl_alpha_report(
+    competition: str,
+    threads: list[ThreadRecord],
+    resolved_notebooks: list[NotebookRecord] | None = None,
+    notebook_resolution_errors: list[str] | None = None,
+) -> AlphaReport:
     findings = sorted((build_finding(t) for t in threads), key=lambda x: x.alpha_score, reverse=True)
     host_updates = [f.url for f in findings if "host_or_metric_update" in f.why_it_matters]
     next_assets = []
@@ -63,4 +68,6 @@ def crawl_alpha_report(competition: str, threads: list[ThreadRecord]) -> AlphaRe
         host_updates=host_updates,
         contradictions=[],
         next_assets=deduped_assets,
+        resolved_notebooks=resolved_notebooks or [],
+        notebook_resolution_errors=notebook_resolution_errors or [],
     )

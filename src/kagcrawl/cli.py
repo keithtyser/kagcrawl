@@ -9,8 +9,8 @@ from .alpha import crawl_alpha_report
 from .discussions import list_discussion_threads
 from .exporters import report_to_json, report_to_txt, write_output
 from .notebook import fetch_notebook
+from .resolve import resolve_linked_notebooks
 from .thread import fetch_thread
-from .utils.links import parse_notebook_slug
 
 app = typer.Typer(help="Agent-first Kaggle discussion crawler")
 
@@ -46,10 +46,16 @@ def alpha(
 ) -> None:
     urls = list_discussion_threads(competition, limit=max_threads)
     threads = [fetch_thread(url) for url in urls]
-    report = crawl_alpha_report(competition, threads)
+    resolved = []
+    resolution_errors = []
     if resolve_notebooks:
-        # v0: just preserve linked notebook urls in next_assets; resolution can be manual or follow-up
-        pass
+        resolved, resolution_errors = resolve_linked_notebooks(threads)
+    report = crawl_alpha_report(
+        competition,
+        threads,
+        resolved_notebooks=resolved,
+        notebook_resolution_errors=resolution_errors,
+    )
     content = report_to_txt(report) if format == "txt" else report_to_json(report)
     if out:
         write_output(content, out)
@@ -62,11 +68,21 @@ def alpha(
 def context(
     competition: str,
     max_threads: int = typer.Option(20, "--max-threads"),
+    resolve_notebooks: bool = typer.Option(False, "--resolve-notebooks"),
     out: str = typer.Option(..., "--out"),
 ) -> None:
     urls = list_discussion_threads(competition, limit=max_threads)
     threads = [fetch_thread(url) for url in urls]
-    report = crawl_alpha_report(competition, threads)
+    resolved = []
+    resolution_errors = []
+    if resolve_notebooks:
+        resolved, resolution_errors = resolve_linked_notebooks(threads)
+    report = crawl_alpha_report(
+        competition,
+        threads,
+        resolved_notebooks=resolved,
+        notebook_resolution_errors=resolution_errors,
+    )
     content = report_to_txt(report)
     write_output(content, out)
     typer.echo(out)

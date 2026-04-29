@@ -105,9 +105,15 @@ def snapshot_to_text(snapshot: str) -> str:
             continue
         line = re.sub(r'^[\-\s]+', '', line)
         line = re.sub(r'\s*\[ref=e\d+\](?:\s*\[nth=\d+\])?', '', line)
+        line = re.sub(r'\s*\[level=\d+\]', '', line)
         line = re.sub(r'^(link|button|heading|paragraph|text|strong|listitem|tab|textbox|navigation|main|separator|list|tablist|alert|document):\s*', '', line)
+        quoted_match = re.match(r'^(?:link|button|heading|paragraph|text|strong|listitem|tab|textbox|navigation)\s+"([^"]+)"$', line)
+        if quoted_match:
+            line = quoted_match.group(1)
+        else:
+            line = re.sub(r'^(?:link|button|heading|paragraph|text|strong|listitem|tab|textbox|navigation)\s+"([^"]+)"\s*:?', r'\1', line)
         line = re.sub(r'\s+', ' ', line).strip()
-        if line:
+        if line and line not in {':', 'img', 'more_horiz', 'expand_more', 'menu'}:
             lines.append(line)
     out: list[str] = []
     previous = None

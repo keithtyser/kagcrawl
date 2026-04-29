@@ -68,3 +68,5 @@ class AlphaReport(BaseModel):
     host_updates: list[str] = Field(default_factory=list)
     contradictions: list[str] = Field(default_factory=list)
     next_assets: list[str] = Field(default_factory=list)
+    resolved_notebooks: list[NotebookRecord] = Field(default_factory=list)
+    notebook_resolution_errors: list[str] = Field(default_factory=list)
