@@ -17,6 +17,17 @@ How discussion discovery works:
 Why this matters:
 Kaggle discussion listings and notebook pages are annoying for generic chatbots. `kagcrawl` uses the same style of browser-accessibility extraction that actually works on those pages instead of trusting raw rendered HTML.
 
+API mode:
+- FastAPI app lives at `src/kagcrawl/api.py`
+- local run:
+  uvicorn kagcrawl.api:app --host 0.0.0.0 --port 8787
+- endpoints:
+  - `GET /health`
+  - `GET /doctor`
+  - `POST /alpha`
+  - `POST /thread`
+  - `POST /notebook`
+
 ChatGPT sandbox tip:
 - first run:
   python kagcrawl_singlefile.py doctor
