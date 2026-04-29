@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import os
 from dataclasses import dataclass
 
 
@@ -38,6 +39,10 @@ class CapabilityReport:
 
 
 def _has_command(name: str) -> bool:
+    if name == "agent-browser":
+        override = os.environ.get("KAGCRAWL_AGENT_BROWSER", "").strip()
+        if override and os.path.exists(override):
+            return True
     return shutil.which(name) is not None
 
 
