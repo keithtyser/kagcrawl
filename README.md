@@ -18,6 +18,10 @@ Why this matters:
 Kaggle discussion listings and notebook pages are annoying for generic chatbots. `kagcrawl` uses the same style of browser-accessibility extraction that actually works on those pages instead of trusting raw rendered HTML.
 
 ChatGPT sandbox tip:
-- if `git clone` or `pip install` is blocked, upload `kagcrawl_singlefile.py` directly into the sandbox and run:
+- first run:
+  python kagcrawl_singlefile.py doctor
+- if `git clone` or `pip install` is blocked, upload `kagcrawl_singlefile.py` directly into the sandbox and run it there
+- if live crawling is available:
   python kagcrawl_singlefile.py alpha neurogolf-2026 --max-threads 10 --resolve-notebooks --format txt
-- this still requires network access to Kaggle plus `agent-browser` for discussion crawling and `kaggle` CLI for notebook pulls
+- if the sandbox has no network, no `agent-browser`, or no `kaggle` CLI, upload discussion snapshots/json plus `.ipynb` files and run offline/hybrid mode:
+  python kagcrawl_singlefile.py alpha neurogolf-2026 --thread-artifact-dir ./threads --notebook-artifact-dir ./notebooks --format txt

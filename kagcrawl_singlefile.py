@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import uuid
@@ -114,6 +115,60 @@ class AlphaReport:
     next_assets: list[str]
     resolved_notebooks: list[NotebookRecord] = field(default_factory=list)
     notebook_resolution_errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CapabilityReport:
+    agent_browser: bool
+    kaggle_cli: bool
+    kaggle_dns: bool
+    github_dns: bool
+
+    @property
+    def live_discussion_crawl(self) -> bool:
+        return self.agent_browser and self.kaggle_dns
+
+    @property
+    def live_notebook_pull(self) -> bool:
+        return self.kaggle_cli and self.kaggle_dns
+
+    @property
+    def offline_artifacts_only(self) -> bool:
+        return not self.live_discussion_crawl and not self.live_notebook_pull
+
+    def recommended_modes(self) -> list[str]:
+        modes = []
+        if self.live_discussion_crawl:
+            modes.append("live_discussions")
+        if self.live_notebook_pull:
+            modes.append("live_notebooks")
+        if self.offline_artifacts_only:
+            modes.append("offline_artifacts")
+        elif not self.live_discussion_crawl or not self.live_notebook_pull:
+            modes.append("hybrid_artifacts")
+        return modes
+
+
+
+def _has_command(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _dns_ok(hostname: str) -> bool:
+    try:
+        socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+        return True
+    except OSError:
+        return False
+
+
+def get_capability_report() -> CapabilityReport:
+    return CapabilityReport(
+        agent_browser=_has_command("agent-browser"),
+        kaggle_cli=_has_command("kaggle"),
+        kaggle_dns=_dns_ok("www.kaggle.com"),
+        github_dns=_dns_ok("github.com"),
+    )
 
 
 def _browser_cmd() -> str:
@@ -237,10 +292,9 @@ def _thread_header_window(snapshot: str) -> str:
     return snapshot[max(0, match.start() - 1200):match.start()]
 
 
-def fetch_thread(url: str) -> ThreadRecord:
-    snapshot, page_title = fetch_page(url, waits_ms=(2500, 1200), scrolls=1)
+def thread_from_snapshot(snapshot: str, source_name: str = "snapshot") -> ThreadRecord:
     title_match = _thread_title_match(snapshot)
-    title = title_match.group(1) if title_match else (page_title or url)
+    title = title_match.group(1) if title_match else source_name
     header = _thread_header_window(snapshot)
     author = None
     candidates = re.findall(r'link "([^"]+)" \[ref=e\d+\]:', header)
@@ -261,6 +315,7 @@ def fetch_thread(url: str) -> ThreadRecord:
     vm = re.search(r"\b(\d+) votes?\b", body_text)
     if vm:
         votes = int(vm.group(1))
+    url = source_name if source_name.startswith(("http://", "https://", "file://")) else f"artifact://{source_name}"
     return ThreadRecord(
         competition_slug=parse_competition_slug(url),
         kaggle_thread_id=parse_discussion_id(url),
@@ -275,6 +330,11 @@ def fetch_thread(url: str) -> ThreadRecord:
     )
 
 
+def fetch_thread(url: str) -> ThreadRecord:
+    snapshot, _page_title = fetch_page(url, waits_ms=(2500, 1200), scrolls=1)
+    return thread_from_snapshot(snapshot, source_name=url)
+
+
 def pull_notebook(owner: str, slug: str, workdir: str | Path) -> Path:
     outdir = Path(workdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -282,29 +342,64 @@ def pull_notebook(owner: str, slug: str, workdir: str | Path) -> Path:
     return outdir / f"{slug}.ipynb"
 
 
+def load_notebook_from_ipynb(ipynb_path: str | Path, owner: str | None = None, slug: str | None = None) -> NotebookRecord:
+    path = Path(ipynb_path)
+    notebook = json.loads(path.read_text())
+    markdown = []
+    code = []
+    for cell in notebook.get("cells", []):
+        source = "".join(cell.get("source", []))
+        if not source.strip():
+            continue
+        if cell.get("cell_type") == "markdown":
+            markdown.append(source)
+        elif cell.get("cell_type") == "code":
+            code.append(source)
+    return NotebookRecord(
+        owner=owner or "local",
+        slug=slug or path.stem,
+        url=f"file://{path}",
+        title=slug or path.stem,
+        markdown_text="\n\n".join(markdown).strip(),
+        selected_code_cells=code,
+        raw_path=str(path),
+    )
+
+
 def fetch_notebook(owner: str, slug: str) -> NotebookRecord:
     with tempfile.TemporaryDirectory(prefix="kagcrawl_") as tmp:
         ipynb = pull_notebook(owner, slug, tmp)
-        notebook = json.loads(Path(ipynb).read_text())
-        markdown = []
-        code = []
-        for cell in notebook.get("cells", []):
-            source = "".join(cell.get("source", []))
-            if not source.strip():
-                continue
-            if cell.get("cell_type") == "markdown":
-                markdown.append(source)
-            elif cell.get("cell_type") == "code":
-                code.append(source)
-        return NotebookRecord(
-            owner=owner,
-            slug=slug,
-            url=f"https://www.kaggle.com/code/{owner}/{slug}",
-            title=slug,
-            markdown_text="\n\n".join(markdown).strip(),
-            selected_code_cells=code,
-            raw_path=str(ipynb),
-        )
+        return load_notebook_from_ipynb(ipynb, owner=owner, slug=slug)
+
+
+def load_threads_from_artifact_dir(path: str | Path) -> list[ThreadRecord]:
+    base = Path(path)
+    if not base.exists():
+        raise FileNotFoundError(f"thread artifact dir not found: {base}")
+    records = []
+    for artifact in sorted(base.iterdir()):
+        if artifact.suffix == ".json":
+            payload = json.loads(artifact.read_text())
+            payload["links"] = [Link(**link) for link in payload.get("links", [])]
+            records.append(ThreadRecord(**payload))
+        elif artifact.suffix in {".txt", ".snapshot"}:
+            records.append(thread_from_snapshot(artifact.read_text(), source_name=artifact.stem))
+    return records
+
+
+def load_notebooks_from_artifact_dir(path: str | Path) -> list[NotebookRecord]:
+    base = Path(path)
+    if not base.exists():
+        raise FileNotFoundError(f"notebook artifact dir not found: {base}")
+    records = []
+    for artifact in sorted(base.iterdir()):
+        if artifact.suffix == ".ipynb":
+            records.append(load_notebook_from_ipynb(artifact))
+        elif artifact.suffix == ".json":
+            payload = json.loads(artifact.read_text())
+            if {"owner", "slug", "markdown_text"}.issubset(payload.keys()):
+                records.append(NotebookRecord(**payload))
+    return records
 
 
 def resolve_linked_notebooks(threads: list[ThreadRecord]) -> tuple[list[NotebookRecord], list[str]]:
@@ -356,10 +451,38 @@ def build_finding(thread: ThreadRecord) -> AlphaFinding:
     )
 
 
-def crawl_alpha(competition: str, max_threads: int = 10, resolve_notebooks_flag: bool = False) -> AlphaReport:
+def gather_threads(competition: str, max_threads: int, thread_artifact_dir: str | None = None) -> list[ThreadRecord]:
+    if thread_artifact_dir:
+        return load_threads_from_artifact_dir(thread_artifact_dir)
+    capabilities = get_capability_report()
+    if not capabilities.live_discussion_crawl:
+        raise RuntimeError(
+            "live discussion crawling unavailable. Run 'doctor' or provide --thread-artifact-dir with uploaded snapshots/json."
+        )
     urls = list_discussion_threads(competition, limit=max_threads)
-    threads = [fetch_thread(url) for url in urls]
-    notebooks, errors = (resolve_linked_notebooks(threads) if resolve_notebooks_flag else ([], []))
+    return [fetch_thread(url) for url in urls]
+
+
+def gather_notebooks(threads: list[ThreadRecord], resolve_notebooks_flag: bool, notebook_artifact_dir: str | None = None):
+    if notebook_artifact_dir:
+        return load_notebooks_from_artifact_dir(notebook_artifact_dir), []
+    if not resolve_notebooks_flag:
+        return [], []
+    capabilities = get_capability_report()
+    if not capabilities.live_notebook_pull:
+        return [], ["live notebook pull unavailable. Run 'doctor' or provide --notebook-artifact-dir with uploaded .ipynb files."]
+    return resolve_linked_notebooks(threads)
+
+
+def crawl_alpha(
+    competition: str,
+    max_threads: int = 10,
+    resolve_notebooks_flag: bool = False,
+    thread_artifact_dir: str | None = None,
+    notebook_artifact_dir: str | None = None,
+) -> AlphaReport:
+    threads = gather_threads(competition, max_threads, thread_artifact_dir=thread_artifact_dir)
+    notebooks, errors = gather_notebooks(threads, resolve_notebooks_flag, notebook_artifact_dir=notebook_artifact_dir)
     findings = sorted([build_finding(t) for t in threads], key=lambda x: x.alpha_score, reverse=True)
     next_assets = []
     for f in findings:
@@ -413,15 +536,57 @@ def report_to_txt(report: AlphaReport) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Single-file kagcrawl for sandbox uploads")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    doctor = sub.add_parser("doctor")
+    doctor.add_argument("--format", choices=["json", "txt"], default="txt")
+
     alpha = sub.add_parser("alpha")
     alpha.add_argument("competition")
     alpha.add_argument("--max-threads", type=int, default=10)
     alpha.add_argument("--resolve-notebooks", action="store_true")
+    alpha.add_argument("--thread-artifact-dir")
+    alpha.add_argument("--notebook-artifact-dir")
     alpha.add_argument("--format", choices=["json", "txt"], default="txt")
 
     args = parser.parse_args()
+    if args.cmd == "doctor":
+        report = get_capability_report()
+        payload = {
+            "agent_browser": report.agent_browser,
+            "kaggle_cli": report.kaggle_cli,
+            "kaggle_dns": report.kaggle_dns,
+            "github_dns": report.github_dns,
+            "live_discussion_crawl": report.live_discussion_crawl,
+            "live_notebook_pull": report.live_notebook_pull,
+            "recommended_modes": report.recommended_modes(),
+        }
+        if args.format == "json":
+            print(json.dumps(payload, indent=2))
+        else:
+            print("Kagcrawl doctor")
+            print(f"- agent-browser: {'yes' if report.agent_browser else 'no'}")
+            print(f"- kaggle CLI: {'yes' if report.kaggle_cli else 'no'}")
+            print(f"- Kaggle DNS/network: {'yes' if report.kaggle_dns else 'no'}")
+            print(f"- GitHub DNS/network: {'yes' if report.github_dns else 'no'}")
+            print(f"- live discussion crawl: {'yes' if report.live_discussion_crawl else 'no'}")
+            print(f"- live notebook pull: {'yes' if report.live_notebook_pull else 'no'}")
+            print(f"- recommended modes: {', '.join(report.recommended_modes())}")
+            if report.offline_artifacts_only:
+                print("- next step: upload discussion snapshots/json and .ipynb files, then use --thread-artifact-dir and --notebook-artifact-dir")
+            elif not report.live_discussion_crawl:
+                print("- next step: use uploaded thread snapshots/json via --thread-artifact-dir")
+            elif not report.live_notebook_pull:
+                print("- next step: use uploaded .ipynb files via --notebook-artifact-dir")
+        return
+
     if args.cmd == "alpha":
-        report = crawl_alpha(args.competition, max_threads=args.max_threads, resolve_notebooks_flag=args.resolve_notebooks)
+        report = crawl_alpha(
+            args.competition,
+            max_threads=args.max_threads,
+            resolve_notebooks_flag=args.resolve_notebooks,
+            thread_artifact_dir=args.thread_artifact_dir,
+            notebook_artifact_dir=args.notebook_artifact_dir,
+        )
         if args.format == "json":
             print(json.dumps(asdict(report), indent=2))
         else:

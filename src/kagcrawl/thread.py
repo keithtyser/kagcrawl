@@ -94,6 +94,26 @@ def _fetch_thread_http(url: str) -> ThreadRecord:
     )
 
 
+def thread_from_snapshot(snapshot: str, source_name: str = "snapshot") -> ThreadRecord:
+    title = _extract_thread_title(snapshot, source_name)
+    url = source_name if source_name.startswith(("http://", "https://", "file://")) else f"artifact://{source_name}"
+    links = [Link(url=link, target_type=classify_link(link)) for link in extract_urls(snapshot)]
+    body_text = _extract_body_text(snapshot)
+    return ThreadRecord(
+        competition_slug=parse_competition_slug(url),
+        kaggle_thread_id=parse_discussion_id(url),
+        url=url,
+        title=title,
+        author=_extract_author(snapshot),
+        author_role=_extract_author_role(snapshot),
+        created_at_text=_extract_created_at(snapshot),
+        upvotes=_extract_upvotes(body_text),
+        body_text=body_text,
+        comments=[],
+        links=links,
+    )
+
+
 def _extract_body_text(snapshot: str) -> str:
     match = _thread_title_match(snapshot)
     if match:
