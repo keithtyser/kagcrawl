@@ -21,12 +21,20 @@ API mode:
 - FastAPI app lives at `src/kagcrawl/api.py`
 - local run:
   uvicorn kagcrawl.api:app --host 0.0.0.0 --port 8787
+- auth:
+  - set `KAGCRAWL_API_KEY` in the server environment
+  - `GET /health` stays public
+  - all other endpoints require either `X-API-Key: <key>` or `Authorization: Bearer <key>`
 - endpoints:
   - `GET /health`
   - `GET /doctor`
   - `POST /alpha`
   - `POST /thread`
   - `POST /notebook`
+
+Example API call:
+- `curl -H 'X-API-Key: YOUR_KEY' https://kagcrawl.keithtyser.com/doctor`
+- `curl -X POST https://kagcrawl.keithtyser.com/alpha -H 'Content-Type: application/json' -H 'X-API-Key: YOUR_KEY' -d '{"competition":"neurogolf-2026","max_threads":10,"resolve_notebooks":true}'`
 
 ChatGPT sandbox tip:
 - first run:

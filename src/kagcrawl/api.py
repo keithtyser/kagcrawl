@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional
+import os
+import secrets
+from typing import Annotated, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from .alpha import crawl_alpha_report
@@ -33,12 +35,40 @@ class NotebookRequest(BaseModel):
 app = FastAPI(title="kagcrawl API", version="0.1.0")
 
 
+def _expected_api_key() -> str:
+    api_key = os.environ.get("KAGCRAWL_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server missing KAGCRAWL_API_KEY",
+        )
+    return api_key
+
+
+def require_api_key(
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> None:
+    expected = _expected_api_key()
+    provided = (x_api_key or "").strip()
+    if not provided and authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            provided = token.strip()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
 
 
-@app.get("/doctor")
+@app.get("/doctor", dependencies=[Depends(require_api_key)])
 def doctor() -> dict:
     report = get_capability_report()
     return {
@@ -52,7 +82,7 @@ def doctor() -> dict:
     }
 
 
-@app.post("/alpha")
+@app.post("/alpha", dependencies=[Depends(require_api_key)])
 def alpha(req: AlphaRequest) -> dict:
     try:
         threads = gather_threads(req.competition, req.max_threads, thread_artifact_dir=req.thread_artifact_dir)
@@ -72,7 +102,7 @@ def alpha(req: AlphaRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/thread")
+@app.post("/thread", dependencies=[Depends(require_api_key)])
 def thread(req: ThreadRequest) -> dict:
     try:
         if req.snapshot_file:
@@ -87,7 +117,7 @@ def thread(req: ThreadRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/notebook")
+@app.post("/notebook", dependencies=[Depends(require_api_key)])
 def notebook(req: NotebookRequest) -> dict:
     try:
         if req.ipynb_path:
